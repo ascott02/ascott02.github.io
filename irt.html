@@ -5,13 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IRT ICC Visualizer</title>
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     <style>
       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; }
       .viz-block { width: 600px; max-width: 100%; margin: 0 0 24px 0; }
       .plot { width: 100%; height: 400px; }
+      .equation { margin: 8px 0 4px; font-size: 16px; }
       .sliders { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 8px 0 0; width: 100%; }
       .slider { display: grid; grid-template-columns: 140px 60px 1fr; align-items: center; gap: 8px; }
       .slider input[type=range] { width: 100%; }
+      .lock-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
     </style>
     <script src="script.js" defer></script>
 </head>
@@ -20,21 +24,25 @@
 
     <section class="viz-block">
       <div id="plot1PL" class="plot"></div>
+      <div id="eq1PL" class="equation"></div>
       <div id="sliders1PL" class="sliders"></div>
     </section>
 
     <section class="viz-block">
       <div id="plot2PL" class="plot"></div>
+      <div id="eq2PL" class="equation"></div>
       <div id="sliders2PL" class="sliders"></div>
     </section>
 
     <section class="viz-block">
       <div id="plot3PL" class="plot"></div>
+      <div id="eq3PL" class="equation"></div>
       <div id="sliders3PL" class="sliders"></div>
     </section>
 
     <section class="viz-block">
       <div id="plot4PL" class="plot"></div>
+      <div id="eq4PL" class="equation"></div>
       <div id="sliders4PL" class="sliders"></div>
     </section>
 </body>

@@ -42,6 +42,23 @@ if (!window.thetaGrid) {
     window.thetaGrid = Array.from({ length: 400 }, (_, i) => -4 + (i * 8 / 399));
 }
 
+// Render equations using KaTeX if available
+document.addEventListener('DOMContentLoaded', () => {
+    const render = (elId, tex) => {
+        const el = document.getElementById(elId);
+        if (el && window.katex) {
+            window.katex.render(tex, el, { throwOnError: false });
+        } else if (el) {
+            // Fallback plain text if KaTeX not loaded yet
+            el.textContent = tex;
+        }
+    };
+    render('eq1PL', 'P(\\theta)=\\tfrac{1}{1+e^{-(\\theta-b)}}');
+    render('eq2PL', 'P(\\theta)=\\tfrac{1}{1+e^{-a(\\theta-b)}}');
+    render('eq3PL', 'P(\\theta)=c + (1-c)\\,\\tfrac{1}{1+e^{-a(\\theta-b)}}');
+    render('eq4PL', 'P(\\theta)=c + (d-c)\\,\\tfrac{1}{1+e^{-a(\\theta-b)}}');
+});
+
 // Initialize a model with sliders and dynamic Plotly updates
 function setupModel({ containerId, slidersId, title, params, computeCurve, computePoint }) {
     // Create plot
@@ -53,6 +70,60 @@ function setupModel({ containerId, slidersId, title, params, computeCurve, compu
         createSlider(p.id, p.label, p.min, p.max, p.step, p.defaultValue, update)
     );
     sliderObjs.forEach(s => slidersContainer.appendChild(s.wrapper));
+
+    // Optional: Add a checkbox to lock θ and b together when both sliders exist
+    const thetaSlider = sliderObjs.find(s => s.input.id.startsWith('theta'));
+    const bSlider = sliderObjs.find(s => s.input.id.startsWith('b'));
+
+    let lockContainer, lockCheckbox;
+    if (thetaSlider && bSlider) {
+        lockContainer = document.createElement('div');
+        lockContainer.className = 'lock-row';
+        lockCheckbox = document.createElement('input');
+        lockCheckbox.type = 'checkbox';
+        lockCheckbox.id = `${slidersId}-lock`;
+        const lockLabel = document.createElement('label');
+        lockLabel.setAttribute('for', lockCheckbox.id);
+        lockLabel.textContent = 'Lock θ and b';
+        lockContainer.appendChild(lockCheckbox);
+        lockContainer.appendChild(lockLabel);
+        // Insert above sliders
+        slidersContainer.prepend(lockContainer);
+
+        // Capture-phase listeners to sync before update() runs
+        const onThetaCapture = () => {
+            if (!lockCheckbox.checked) return;
+            const t = parseFloat(thetaSlider.input.value);
+            const bmin = parseFloat(bSlider.input.min);
+            const bmax = parseFloat(bSlider.input.max);
+            const nb = Math.max(bmin, Math.min(bmax, t));
+            if (parseFloat(bSlider.input.value) !== nb) {
+                bSlider.input.value = String(nb);
+                bSlider.valueSpan.textContent = String(nb);
+            }
+        };
+        const onBCapture = () => {
+            if (!lockCheckbox.checked) return;
+            const b = parseFloat(bSlider.input.value);
+            const tmin = parseFloat(thetaSlider.input.min);
+            const tmax = parseFloat(thetaSlider.input.max);
+            const nt = Math.max(tmin, Math.min(tmax, b));
+            if (parseFloat(thetaSlider.input.value) !== nt) {
+                thetaSlider.input.value = String(nt);
+                thetaSlider.valueSpan.textContent = String(nt);
+            }
+        };
+        thetaSlider.input.addEventListener('input', onThetaCapture, { capture: true });
+        bSlider.input.addEventListener('input', onBCapture, { capture: true });
+
+        // When toggled on, immediately sync b to current θ and update plot
+        lockCheckbox.addEventListener('change', () => {
+            if (lockCheckbox.checked) {
+                onThetaCapture();
+                update();
+            }
+        });
+    }
 
     function getValues() {
         const values = {};
