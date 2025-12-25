@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quantum Tarot (Single File)</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body{
+      margin:0; padding:16px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background:#0b0d12; color:#e8e8f0;
+    }
+    .wrap{ max-width: 980px; margin: 0 auto; }
+    h1{ font-size: 26px; margin: 0 0 6px; }
+    .sub{ color:#b8b8c8; margin:0 0 14px; }
+    .card{
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      margin: 10px 0;
+    }
+    label{ display:block; font-size:12px; color:#cfcfe3; margin-bottom:8px; }
+    textarea{
+      width:100%; min-height:56px; resize: vertical;
+      background: rgba(0,0,0,0.35); color:#e8e8f0;
+      border:1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding:10px 12px;
+      outline:none;
+    }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    button{
+      appearance:none;
+      border:1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.06);
+      color:#e8e8f0;
+      border-radius:12px;
+      padding:9px 12px;
+      font-weight:650;
+      cursor:pointer;
+      line-height:1;
+    }
+    button:disabled{ opacity:0.45; cursor:not-allowed; }
+    .status{ font-size:12px; color:#b8b8c8; }
+    .ok{ color:#c6ffd1; } .err{ color:#ffb4b4; }
+    .reveal-title{ font-size:20px; margin:0 0 6px; }
+    .foot{ font-size:12px; color:#9aa0b2; margin-top:8px; line-height:1.45; }
+    a{ color:#bcd0ff; }
+    code{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; }
+
+    pre{
+      margin: 10px 0 0;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(0,0,0,0.28);
+      color: #cfd6ff;
+      overflow:auto;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Embedded Wikipedia HTML container */
+    .wiki{
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(0,0,0,0.22);
+    }
+    .wiki img{ max-width:100%; height:auto; border-radius: 10px; }
+    .wiki table{ width:100%; border-collapse: collapse; }
+    .wiki td, .wiki th{
+      border: 1px solid rgba(255,255,255,0.10);
+      padding: 6px;
+      vertical-align: top;
+      font-size: 12px;
+    }
+    .wiki p, .wiki li{
+      font-size: 13px;
+      line-height: 1.5;
+      color: #d7d7e8;
+    }
+    .wiki ul, .wiki ol{ margin: 8px 0 8px 18px; padding: 0; }
+    .wiki .mw-editsection, .wiki .mw-references-wrap, .wiki .reflist { display:none; }
+    .wiki h2, .wiki h3, .wiki h4 { color:#d9dcff; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Quantum Tarot</h1>
+    <p class="sub">Single-file app. Draw uses a real QRNG. Client enforces ~1 request/minute to be polite.</p>
+
+    <div class="card">
+      <label for="q">Optional: what question are you holding? (stays on your device)</label>
+      <textarea id="q" placeholder="Type a question… or don’t. The moment you draw is the point."></textarea>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button id="drawBtn">Draw</button>
+        <button id="toggleDbgBtn" style="opacity:0.7;">Debug</button>
+        <span id="status" class="status">Booting…</span>
+        <span id="cooldown" class="status"></span>
+      </div>
+
+      <div class="foot">
+        QRNG: <code>https://qrng.anu.edu.au/API/jsonI.php</code>.
+        <!-- NOTE: The ANU legacy endpoint is commonly rate-limited to ~1 request/minute. -->
+        Client enforces 1 request/minute: next draw available in <span id="cooldownInline">—</span>.
+        <br/>
+        Wikipedia links parsed from
+        <a href="https://en.wikipedia.org/wiki/Rider%E2%80%93Waite_Tarot" target="_blank" rel="noreferrer">Rider–Waite Tarot</a>.
+      </div>
+
+      <pre id="debug" style="display:none;"></pre>
+    </div>
+
+    <div class="card" id="result" style="display:none;">
+      <div class="reveal-title" id="cardTitle"></div>
+      <div class="foot" style="margin-top:6px;">
+        Wikipedia page: <a id="wikiLink" href="#" target="_blank" rel="noreferrer">Open</a> ·
+        Orientation: <span id="orientation"></span>
+      </div>
+
+      <div class="wiki" id="wikiBox" style="display:none;">
+        <div id="wikiBody"></div>
+        <div class="foot" style="margin-top:10px;">
+          Source: <a id="wikiSource" href="#" target="_blank" rel="noreferrer">Wikipedia</a> (CC BY-SA).
+          Rendered from MediaWiki API HTML (sanitized).
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      Reality check: browsers may block cross-origin calls to the QRNG endpoint (CORS/privacy settings). If that happens, you’ll see a fetch error.
+    </div>
+  </div>
+
+  <script>
+    // ===================== Deck (78 cards) =====================
+    const MAJORS = [
+      ["The Fool"],["The Magician"],["The High Priestess"],["The Empress"],["The Emperor"],["The Hierophant"],
+      ["The Lovers"],["The Chariot"],["Strength"],["The Hermit"],["Wheel of Fortune"],["Justice"],["The Hanged Man"],
+      ["Death"],["Temperance"],["The Devil"],["The Tower"],["The Star"],["The Moon"],["The Sun"],["Judgement"],["The World"],
+    ];
+    const SUITS = ["Wands","Cups","Swords","Pentacles"];
+    const MINOR_RANKS = [
+      ["Ace"], ["Two"], ["Three"], ["Four"], ["Five"],
+      ["Six"], ["Seven"], ["Eight"], ["Nine"], ["Ten"],
+      ["Page"], ["Knight"], ["Queen"], ["King"],
+    ];
+    function buildDeck() {
+      const deck = [];
+      for (let i = 0; i < MAJORS.length; i++) deck.push({ id: i + 1, name: MAJORS[i][0] });
+      let id = 23;
+      for (const suit of SUITS) for (const [rname] of MINOR_RANKS) deck.push({ id: id++, name: `${rname} of ${suit}` });
+      return deck;
+    }
+    const DECK = buildDeck();
+
+    // ===================== Helpers (Wikipedia) =====================
+    function decodeHtmlEntities(s) {
+      return String(s)
+        .replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#039;/g, "'")
+        .replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+    }
+    function normalizeTitle(s) { return decodeHtmlEntities(s).replace(/\s+/g, " ").trim(); }
+    function wikiTitleFromUrl(pageUrl) {
+      const i = pageUrl.indexOf("/wiki/");
+      if (i === -1) return null;
+      return decodeURIComponent(pageUrl.slice(i + 6)).replace(/_/g, " ");
+    }
+
+    // ===================== Debug + status =====================
+    const drawBtn = document.getElementById("drawBtn");
+    const toggleDbgBtn = document.getElementById("toggleDbgBtn");
+    const statusEl = document.getElementById("status");
+    const debugEl = document.getElementById("debug");
+    const cooldownEl = document.getElementById("cooldown");
+    const cooldownInlineEl = document.getElementById("cooldownInline");
+    function setStatus(text, cls="") { statusEl.textContent = text; statusEl.className = `status ${cls}`.trim(); }
+    function dbg(line){ if (debugEl.style.display === "none") return; debugEl.textContent += line + "\n"; }
+    function dbgReset(){ debugEl.textContent = ""; }
+    toggleDbgBtn.addEventListener("click", () => {
+      const on = debugEl.style.display === "none";
+      debugEl.style.display = on ? "block" : "none";
+      toggleDbgBtn.textContent = on ? "Debug (on)" : "Debug";
+      if (on) dbg("Debug enabled.");
+    });
+
+    // ===================== Cooldown (1 request/min) =====================
+    const COOLDOWN_MS = 60_000;
+    const COOLDOWN_KEY = "qtarot_next_allowed_ts";
+    function now(){ return Date.now(); }
+    function getNextAllowedTs(){ return Number(localStorage.getItem(COOLDOWN_KEY) || "0"); }
+    function setNextAllowedTs(ts){ localStorage.setItem(COOLDOWN_KEY, String(ts)); }
+    function fmtSeconds(ms){ return `${Math.ceil(ms/1000)}s`; }
+    function updateCooldownUI(){
+      const remaining = Math.max(0, getNextAllowedTs() - now());
+      cooldownEl.textContent = remaining > 0 ? `Cooldown: ${fmtSeconds(remaining)}` : "Cooldown: ready";
+      cooldownInlineEl.textContent = remaining > 0 ? fmtSeconds(remaining) : "now";
+      drawBtn.disabled = remaining > 0 || !READY;
+    }
+    setInterval(updateCooldownUI, 250);
+    function enforceCooldownStart(){
+      setNextAllowedTs(now() + COOLDOWN_MS);
+      updateCooldownUI();
+    }
+
+    // ===================== QRNG (ANU) =====================
+    const QRNG_URL = "https://qrng.anu.edu.au/API/jsonI.php";
+    async function fetchQRNGUint16(count, { timeoutMs = 3500 } = {}) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+      const url = new URL(QRNG_URL);
+      url.searchParams.set("length", String(count));
+      url.searchParams.set("type", "uint16");
+
+      let text = "";
+      try {
+        const res = await fetch(url.toString(), {
+          method: "GET",
+          cache: "no-store",
+          signal: ctrl.signal,
+          headers: { "Accept": "application/json" },
+        });
+
+        text = await res.text();
+        if (!res.ok) throw new Error(`QRNG HTTP ${res.status} ${res.statusText}`);
+
+        let json;
+        try { json = JSON.parse(text); } catch { throw new Error("QRNG: JSON parse failed"); }
+        if (!json || json.success !== true || !Array.isArray(json.data)) throw new Error("QRNG: malformed response");
+        for (const v of json.data) if (!Number.isInteger(v) || v < 0 || v > 65535) throw new Error("QRNG: value out of range");
+        return { data: json.data };
+      } catch (e) {
+        const snippet = (text || "").slice(0, 240);
+        throw new Error(`${e.message}${snippet ? ` | body: ${snippet}` : ""}`);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    // Unbiased mapping to 1..156: 1..78 upright, 79..156 reversed.
+    const RANGE_156 = 156;
+    const LIMIT_156 = Math.floor(65536 / RANGE_156) * RANGE_156; // 65520
+    let qrngBuffer = [];
+    async function uniformInt1to156() {
+      while (true) {
+        if (qrngBuffer.length === 0) {
+          enforceCooldownStart();
+          const { data } = await fetchQRNGUint16(16);
+          qrngBuffer = data;
+          dbg(`[qrng] buffer refilled (16 uint16).`);
+        }
+        const x = qrngBuffer.pop();
+        if (x < LIMIT_156) return (x % RANGE_156) + 1;
+      }
+    }
+
+    // ===================== Wikipedia: canonical card links from Rider–Waite page =====================
+    const WIKI_API = "https://en.wikipedia.org/w/api.php";
+    const RIDER_WAITE_TITLE = "Rider–Waite Tarot";
+    const CARD_NAMES = (() => {
+      const s = new Set();
+      for (const [n] of MAJORS) s.add(n);
+      for (const suit of SUITS) for (const [r] of MINOR_RANKS) s.add(`${r} of ${suit}`);
+      return s;
+    })();
+    let CARDMAP = null;
+
+    async function loadCardMapFromRiderWaitePage() {
+      const url = new URL(WIKI_API);
+      url.searchParams.set("action", "parse");
+      url.searchParams.set("page", RIDER_WAITE_TITLE);
+      url.searchParams.set("prop", "text");
+      url.searchParams.set("format", "json");
+      url.searchParams.set("origin", "*");
+
+      const res = await fetch(url.toString(), { cache: "no-store" });
+      if (!res.ok) throw new Error(`Wiki parse HTTP ${res.status}`);
+      const j = await res.json();
+      const html = j?.parse?.text?.["*"];
+      if (typeof html !== "string" || !html.trim()) throw new Error("Wiki parse returned no HTML");
+
+      const map = {};
+      const re = /<a\s+[^>]*href="\/wiki\/([^"#?]+)"[^>]*>([^<]+)<\/a>/gi;
+      let m;
+      while ((m = re.exec(html)) !== null) {
+        const slug = m[1];
+        const text = normalizeTitle(m[2]);
+        if (!CARD_NAMES.has(text)) continue;
+        if (!map[text]) map[text] = `https://en.wikipedia.org/wiki/${slug}`;
+      }
+      return map;
+    }
+
+    async function fetchFullPageBodyHtml(wikiTitle) {
+      const url = new URL(WIKI_API);
+      url.searchParams.set("action", "parse");
+      url.searchParams.set("page", wikiTitle);
+      url.searchParams.set("prop", "text");
+      url.searchParams.set("format", "json");
+      url.searchParams.set("origin", "*");
+
+      const res = await fetch(url.toString(), { cache: "no-store" });
+      if (!res.ok) throw new Error(`Wiki parse(text) HTTP ${res.status}`);
+      const j = await res.json();
+      const html = j?.parse?.text?.["*"];
+      if (typeof html !== "string" || !html.trim()) return null;
+      return html;
+    }
+
+    // ---------- Robust section removal utilities ----------
+    function findHeading(root, wantedLower) {
+      // Wikipedia headings typically look like: <h2><span class="mw-headline" id="References">References</span>...</h2>
+      const spans = [...root.querySelectorAll(".mw-headline")];
+      for (const s of spans) {
+        const t = (s.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const id = (s.getAttribute("id") || "").replace(/_/g, " ").trim().toLowerCase();
+        if (t === wantedLower || id === wantedLower) return s.closest("h2,h3,h4,h5,h6");
+      }
+      const hs = [...root.querySelectorAll("h2,h3,h4,h5,h6")];
+      return hs.find(h => (h.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() === wantedLower) || null;
+    }
+
+    function removeSection(root, headingLower) {
+      const h = findHeading(root, headingLower);
+      if (!h) return false;
+      const level = parseInt(h.tagName.slice(1), 10);
+
+      const parent = h.parentNode;
+      // remove heading
+      parent.removeChild(h);
+
+      // remove nodes until next heading of same-or-higher level
+      let n = parent.firstChild;
+      // we need to start from the node that *was* after h; easiest: keep removing parent's firstChild after h removal isn't correct.
+      // Instead, we find the next sibling that followed h originally using a marker approach:
+      // We'll re-find by scanning for the first heading after the removed one, but that's messy.
+      // Better: remove while traversing from h.nextSibling captured before removal.
+      return true;
+    }
+
+    function removeSectionByHeading(root, headingLower) {
+      const h = findHeading(root, headingLower);
+      if (!h) return false;
+
+      const level = parseInt(h.tagName.slice(1), 10);
+      let cur = h;
+      while (cur) {
+        const next = cur.nextSibling; // include text nodes
+        cur.remove();
+        // stop when we reach another heading of same-or-higher level
+        if (next && next.nodeType === 1 && /^H[2-6]$/.test(next.tagName)) {
+          const lvl = parseInt(next.tagName.slice(1), 10);
+          if (lvl <= level) break;
+        }
+        cur = next;
+      }
+      // Now we removed until (but not including) the stopping heading, if any.
+      return true;
+    }
+
+    function truncateFromHeading(root, headingLower) {
+      const h = findHeading(root, headingLower);
+      if (!h) return false;
+      let cur = h;
+      while (cur) {
+        const next = cur.nextSibling; // include text nodes
+        cur.remove();
+        cur = next;
+      }
+      return true;
+    }
+
+    function sanitizeWikipediaWholeBodyTrimAfterReferences(html) {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+
+      // Wikipedia parse output wraps the content; operating on body directly can leave odd wrappers.
+      const container = doc.querySelector(".mw-parser-output") || doc.body;
+
+      // Drop "External links" section if present (sometimes before refs).
+      removeSectionByHeading(container, "external links");
+
+      // Truncate at "References" (remove references heading + everything after it).
+      truncateFromHeading(container, "references");
+
+      // Remove truly unsafe / interactive
+      for (const bad of container.querySelectorAll("script, style, iframe, form, input, button, textarea, noscript")) bad.remove();
+
+      // Normalize links, images, and strip event handlers / inline styles
+      const walker = doc.createTreeWalker(container, NodeFilter.SHOW_ELEMENT);
+      while (walker.nextNode()) {
+        const el = walker.currentNode;
+
+        for (const attr of [...el.attributes]) {
+          const n = attr.name.toLowerCase();
+          if (n.startsWith("on")) el.removeAttribute(attr.name);
+          if (n === "style") el.removeAttribute(attr.name);
+          if (n === "srcset") el.removeAttribute(attr.name);
+        }
+
+        if (el.tagName === "A") {
+          const href = el.getAttribute("href") || "";
+          if (href.startsWith("/wiki/")) el.setAttribute("href", "https://en.wikipedia.org" + href);
+          if (href.startsWith("//")) el.setAttribute("href", "https:" + href);
+          el.setAttribute("target", "_blank");
+          el.setAttribute("rel", "noreferrer");
+        }
+
+        if (el.tagName === "IMG") {
+          const src = el.getAttribute("src") || "";
+          if (src.startsWith("//")) el.setAttribute("src", "https:" + src);
+          el.setAttribute("loading", "lazy");
+        }
+      }
+
+      return container.innerHTML.trim();
+    }
+
+    // ===================== Result UI =====================
+    const result = document.getElementById("result");
+    const cardTitle = document.getElementById("cardTitle");
+    const orientationEl = document.getElementById("orientation");
+    const wikiBox = document.getElementById("wikiBox");
+    const wikiBody = document.getElementById("wikiBody");
+    const wikiLink = document.getElementById("wikiLink");
+    const wikiSource = document.getElementById("wikiSource");
+
+    async function embedWikipediaFullBody(cardName) {
+      wikiBox.style.display = "none";
+      wikiBody.innerHTML = "";
+      wikiLink.href = "https://en.wikipedia.org/wiki/Rider%E2%80%93Waite_Tarot";
+      wikiSource.href = wikiLink.href;
+
+      const url = CARDMAP?.[cardName];
+      if (!url) {
+        wikiBody.textContent = "No canonical Wikipedia link found for this card (card map incomplete).";
+        wikiBox.style.display = "block";
+        return;
+      }
+
+      wikiLink.href = url;
+      wikiSource.href = url;
+
+      const title = wikiTitleFromUrl(url);
+      dbg(`[wiki] url=${url}`);
+      dbg(`[wiki] title=${title}`);
+      if (!title) throw new Error("Could not parse Wikipedia title from URL.");
+
+      const html = await fetchFullPageBodyHtml(title);
+      if (!html) throw new Error("Wikipedia returned no HTML.");
+
+      wikiBody.innerHTML = sanitizeWikipediaWholeBodyTrimAfterReferences(html);
+      wikiBox.style.display = "block";
+    }
+
+    // ===================== Draw =====================
+    let READY = false;
+
+    async function drawOnce() {
+      if (now() < getNextAllowedTs()) return;
+
+      drawBtn.disabled = true;
+      setStatus("Drawing…", "");
+      dbgReset();
+
+      try {
+        const k = await uniformInt1to156();
+        const isReversed = k > 78;
+        const cardId = isReversed ? (k - 78) : k;
+        const orientation = isReversed ? "Reversed" : "Upright";
+        dbg(`[draw] k=${k} => cardId=${cardId} orientation=${orientation}`);
+
+        const card = DECK[cardId - 1];
+        if (!card) throw new Error("Deck mapping error");
+
+        result.style.display = "block";
+        cardTitle.textContent = `#${card.id} — ${card.name}`;
+        orientationEl.textContent = orientation;
+
+        await embedWikipediaFullBody(card.name);
+
+        setStatus("Draw complete.", "ok");
+      } catch (e) {
+        setStatus("Failed (QRNG/Wikipedia fetch).", "err");
+        dbg(`[error] ${String(e?.message ?? e)}`);
+      } finally {
+        updateCooldownUI();
+      }
+    }
+
+    drawBtn.addEventListener("click", drawOnce);
+
+    // ===================== Boot =====================
+    (async () => {
+      try {
+        setStatus("Loading Wikipedia card map…", "");
+        CARDMAP = await loadCardMapFromRiderWaitePage();
+        const found = Object.keys(CARDMAP).length;
+        READY = found >= 70;
+        setStatus(READY ? "Ready." : `Card map incomplete (${found}/78).`, READY ? "" : "err");
+      } catch (e) {
+        READY = false;
+        setStatus("Boot failed (Wikipedia fetch).", "err");
+        dbg(`[boot] ERROR: ${String(e?.message ?? e)}`);
+      } finally {
+        updateCooldownUI();
+      }
+    })();
+  </script>
+</body>
+</html>
