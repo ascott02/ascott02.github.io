@@ -65,7 +65,6 @@
       word-break: break-word;
     }
 
-    /* Embedded Wikipedia HTML container */
     .wiki{
       margin-top: 10px;
       padding: 10px 12px;
@@ -132,7 +131,7 @@
         <div id="wikiBody"></div>
         <div class="foot" style="margin-top:10px;">
           Source: <a id="wikiSource" href="#" target="_blank" rel="noreferrer">Wikipedia</a> (CC BY-SA).
-          Rendered from MediaWiki API HTML (sanitized).
+          Rendered from MediaWiki <code>action=parse</code> HTML (sanitized, trimmed after References).
         </div>
       </div>
     </div>
@@ -164,7 +163,7 @@
     }
     const DECK = buildDeck();
 
-    // ===================== Helpers (Wikipedia) =====================
+    // ===================== Helpers =====================
     function decodeHtmlEntities(s) {
       return String(s)
         .replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#039;/g, "'")
@@ -209,6 +208,7 @@
     }
     setInterval(updateCooldownUI, 250);
     function enforceCooldownStart(){
+      // Conservative: start cooldown immediately when attempting a QRNG call.
       setNextAllowedTs(now() + COOLDOWN_MS);
       updateCooldownUI();
     }
@@ -302,10 +302,11 @@
       return map;
     }
 
-    async function fetchFullPageBodyHtml(wikiTitle) {
+    // ===================== Wikipedia: fetch parsed HTML via action=parse =====================
+    async function fetchWikipediaParsedHtml(title) {
       const url = new URL(WIKI_API);
       url.searchParams.set("action", "parse");
-      url.searchParams.set("page", wikiTitle);
+      url.searchParams.set("page", title);
       url.searchParams.set("prop", "text");
       url.searchParams.set("format", "json");
       url.searchParams.set("origin", "*");
@@ -318,112 +319,91 @@
       return html;
     }
 
-    // ---------- Robust section removal utilities ----------
-    function findHeading(root, wantedLower) {
-      // Wikipedia headings typically look like: <h2><span class="mw-headline" id="References">References</span>...</h2>
-      const spans = [...root.querySelectorAll(".mw-headline")];
-      for (const s of spans) {
-        const t = (s.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
-        const id = (s.getAttribute("id") || "").replace(/_/g, " ").trim().toLowerCase();
-        if (t === wantedLower || id === wantedLower) return s.closest("h2,h3,h4,h5,h6");
+    // ===================== Wikipedia: simple trim-after-References + sanitize =====================
+    function dropAfterReferences(root) {
+      // In action=parse HTML, sections are usually direct children of .mw-parser-output.
+      // Trim by removing *all* nodes from the References heading onward.
+      const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+
+      // Find a heading element (h2..h6) that represents "References".
+      let h = null;
+
+      // Common case: <h2><span class="mw-headline" id="References">References</span> ...</h2>
+      const headline = root.querySelector('.mw-headline#References');
+      if (headline) h = headline.closest('h2,h3,h4,h5,h6');
+
+      // Fallback: id="References" on some descendant
+      if (!h) {
+        const byId = root.querySelector('#References');
+        if (byId) h = byId.closest('h2,h3,h4,h5,h6');
       }
-      const hs = [...root.querySelectorAll("h2,h3,h4,h5,h6")];
-      return hs.find(h => (h.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() === wantedLower) || null;
-    }
 
-    function removeSection(root, headingLower) {
-      const h = findHeading(root, headingLower);
+      // Last resort: match heading text exactly
+      if (!h) {
+        h = [...root.querySelectorAll('h2,h3,h4,h5,h6')]
+          .find(el => norm(el.textContent) === 'references') || null;
+      }
+
       if (!h) return false;
-      const level = parseInt(h.tagName.slice(1), 10);
 
-      const parent = h.parentNode;
-      // remove heading
-      parent.removeChild(h);
+      // Remove from the heading onward at the root child-node level.
+      const nodes = Array.from(root.childNodes);
+      let idx = nodes.indexOf(h);
 
-      // remove nodes until next heading of same-or-higher level
-      let n = parent.firstChild;
-      // we need to start from the node that *was* after h; easiest: keep removing parent's firstChild after h removal isn't correct.
-      // Instead, we find the next sibling that followed h originally using a marker approach:
-      // We'll re-find by scanning for the first heading after the removed one, but that's messy.
-      // Better: remove while traversing from h.nextSibling captured before removal.
+      // If the heading isn't a direct child, find its nearest direct-child ancestor.
+      if (idx === -1) {
+        let anc = h;
+        while (anc && anc.parentNode !== root) anc = anc.parentNode;
+        if (!anc) return false;
+        idx = nodes.indexOf(anc);
+        if (idx === -1) return false;
+      }
+
+      for (let i = idx; i < nodes.length; i++) nodes[i].remove();
       return true;
     }
 
-    function removeSectionByHeading(root, headingLower) {
-      const h = findHeading(root, headingLower);
-      if (!h) return false;
+    function sanitizeWikiHtml(parsedHtml) {
+      const doc = new DOMParser().parseFromString(parsedHtml, 'text/html');
+      const root = doc.querySelector('.mw-parser-output') || doc.body;
 
-      const level = parseInt(h.tagName.slice(1), 10);
-      let cur = h;
-      while (cur) {
-        const next = cur.nextSibling; // include text nodes
-        cur.remove();
-        // stop when we reach another heading of same-or-higher level
-        if (next && next.nodeType === 1 && /^H[2-6]$/.test(next.tagName)) {
-          const lvl = parseInt(next.tagName.slice(1), 10);
-          if (lvl <= level) break;
-        }
-        cur = next;
-      }
-      // Now we removed until (but not including) the stopping heading, if any.
-      return true;
-    }
+      // Trim after references to avoid weird footers / nav / etc.
+      dropAfterReferences(root);
 
-    function truncateFromHeading(root, headingLower) {
-      const h = findHeading(root, headingLower);
-      if (!h) return false;
-      let cur = h;
-      while (cur) {
-        const next = cur.nextSibling; // include text nodes
-        cur.remove();
-        cur = next;
-      }
-      return true;
-    }
+      // Remove obvious hazards / UI junk
+      for (const bad of root.querySelectorAll(
+        'script, style, iframe, form, input, button, textarea, noscript, .mw-editsection'
+      )) bad.remove();
 
-    function sanitizeWikipediaWholeBodyTrimAfterReferences(html) {
-      const doc = new DOMParser().parseFromString(html, "text/html");
-
-      // Wikipedia parse output wraps the content; operating on body directly can leave odd wrappers.
-      const container = doc.querySelector(".mw-parser-output") || doc.body;
-
-      // Drop "External links" section if present (sometimes before refs).
-      removeSectionByHeading(container, "external links");
-
-      // Truncate at "References" (remove references heading + everything after it).
-      truncateFromHeading(container, "references");
-
-      // Remove truly unsafe / interactive
-      for (const bad of container.querySelectorAll("script, style, iframe, form, input, button, textarea, noscript")) bad.remove();
-
-      // Normalize links, images, and strip event handlers / inline styles
-      const walker = doc.createTreeWalker(container, NodeFilter.SHOW_ELEMENT);
+      // Normalize links/images + strip inline handlers/styles
+      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
       while (walker.nextNode()) {
         const el = walker.currentNode;
 
         for (const attr of [...el.attributes]) {
           const n = attr.name.toLowerCase();
-          if (n.startsWith("on")) el.removeAttribute(attr.name);
-          if (n === "style") el.removeAttribute(attr.name);
-          if (n === "srcset") el.removeAttribute(attr.name);
+          if (n.startsWith('on')) el.removeAttribute(attr.name);
+          if (n === 'style') el.removeAttribute(attr.name);
+          if (n === 'srcset') el.removeAttribute(attr.name);
         }
 
-        if (el.tagName === "A") {
-          const href = el.getAttribute("href") || "";
-          if (href.startsWith("/wiki/")) el.setAttribute("href", "https://en.wikipedia.org" + href);
-          if (href.startsWith("//")) el.setAttribute("href", "https:" + href);
-          el.setAttribute("target", "_blank");
-          el.setAttribute("rel", "noreferrer");
+        if (el.tagName === 'A') {
+          const href = el.getAttribute('href') || '';
+          if (href.startsWith('/wiki/')) el.setAttribute('href', 'https://en.wikipedia.org' + href);
+          if (href.startsWith('//')) el.setAttribute('href', 'https:' + href);
+          el.setAttribute('target', '_blank');
+          el.setAttribute('rel', 'noreferrer');
         }
 
-        if (el.tagName === "IMG") {
-          const src = el.getAttribute("src") || "";
-          if (src.startsWith("//")) el.setAttribute("src", "https:" + src);
-          el.setAttribute("loading", "lazy");
+        if (el.tagName === 'IMG') {
+          const src = el.getAttribute('src') || '';
+          if (src.startsWith('//')) el.setAttribute('src', 'https:' + src);
+          el.setAttribute('loading', 'lazy');
         }
       }
 
-      return container.innerHTML.trim();
+      // Optional wrapper (your requested hook)
+      return `<div id="mw-content-text" class="mw-body-content">${root.innerHTML.trim()}</div>`;
     }
 
     // ===================== Result UI =====================
@@ -435,31 +415,31 @@
     const wikiLink = document.getElementById("wikiLink");
     const wikiSource = document.getElementById("wikiSource");
 
-    async function embedWikipediaFullBody(cardName) {
+    async function embedWikipedia(cardName) {
       wikiBox.style.display = "none";
       wikiBody.innerHTML = "";
       wikiLink.href = "https://en.wikipedia.org/wiki/Rider%E2%80%93Waite_Tarot";
       wikiSource.href = wikiLink.href;
 
-      const url = CARDMAP?.[cardName];
-      if (!url) {
+      const pageUrl = CARDMAP?.[cardName];
+      if (!pageUrl) {
         wikiBody.textContent = "No canonical Wikipedia link found for this card (card map incomplete).";
         wikiBox.style.display = "block";
         return;
       }
 
-      wikiLink.href = url;
-      wikiSource.href = url;
+      wikiLink.href = pageUrl;
+      wikiSource.href = pageUrl;
 
-      const title = wikiTitleFromUrl(url);
-      dbg(`[wiki] url=${url}`);
+      const title = wikiTitleFromUrl(pageUrl);
+      dbg(`[wiki] url=${pageUrl}`);
       dbg(`[wiki] title=${title}`);
       if (!title) throw new Error("Could not parse Wikipedia title from URL.");
 
-      const html = await fetchFullPageBodyHtml(title);
-      if (!html) throw new Error("Wikipedia returned no HTML.");
+      const parsedHtml = await fetchWikipediaParsedHtml(title);
+      if (!parsedHtml) throw new Error("Wikipedia returned no HTML.");
 
-      wikiBody.innerHTML = sanitizeWikipediaWholeBodyTrimAfterReferences(html);
+      wikiBody.innerHTML = sanitizeWikiHtml(parsedHtml);
       wikiBox.style.display = "block";
     }
 
@@ -487,7 +467,7 @@
         cardTitle.textContent = `#${card.id} — ${card.name}`;
         orientationEl.textContent = orientation;
 
-        await embedWikipediaFullBody(card.name);
+        await embedWikipedia(card.name);
 
         setStatus("Draw complete.", "ok");
       } catch (e) {
